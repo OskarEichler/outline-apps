@@ -51,9 +51,12 @@ public class OutlineVpn: NSObject {
 
   /** Starts a VPN tunnel as specified in the OutlineTunnel object. */
   public func start(_ tunnelId: String, named name: String?, withTransport transportConfig: String) async throws {
-    if let manager = await getTunnelManager(), isActiveSession(manager.connection) {
+    if let manager = await getTunnelManager(),
+       isActiveSession(manager.connection) || manager.connection.status == .disconnecting {
       DDLogDebug("Stoppping active session before starting new one")
-      await stopSession(manager)
+      guard await stopSession(manager) else {
+        throw OutlineError.internalError(message: "previous VPN session did not stop")
+      }
     }
 
     let manager: NETunnelProviderManager
@@ -65,49 +68,16 @@ public class OutlineVpn: NSObject {
     }
     let session = manager.connection as! NETunnelProviderSession
 
-    // Register observer for start process completion.
-    class TokenHolder {
-      var token: NSObjectProtocol?
-    }
-    let tokenHolder = TokenHolder()
-      let startDone = Task {
-          await withCheckedContinuation { continuation in
-              tokenHolder.token = NotificationCenter.default.addObserver(forName: .NEVPNStatusDidChange, object: manager.connection, queue: nil) { notification in
-                  // The notification object is always the session, so we can rely on that to not be nil.
-                  guard let connection = notification.object as? NETunnelProviderSession else {
-                      DDLogDebug("Failed to cast notification.object to NETunnelProviderSession")
-                      return
-                  }
-                  
-                  let status = connection.status
-                  DDLogDebug("OutlineVpn.start got status \(String(describing: status)), notification: \(String(describing: notification))")
-                  // The observer may be triggered multiple times, but we only remove it when we reach an end state.
-                  // A successful connection will go through .connecting -> .disconnected
-                  // A failed connection will go through .connecting -> .disconnecting -> .disconnected
-                  // An .invalid event may happen if the configuration is modified and ends in an invalid state.
-                  if status == .connected || status == .disconnected || status == .invalid {
-                      DDLogDebug("Tunnel start done.")
-                      if let token = tokenHolder.token {
-                          NotificationCenter.default.removeObserver(token, name: .NEVPNStatusDidChange, object: connection)
-                      }
-                      continuation.resume()
-                  }
-              }
-          }
-      }
-
-    // Start the session.
     do {
-      DDLogDebug("Calling NETunnelProviderSession.startTunnel([:])")
-      try session.startTunnel(options: [:])
-      DDLogDebug("NETunnelProviderSession.startTunnel() returned")
+      try await waitForVPNStatus(session, terminalStatuses: [.connected, .disconnected, .invalid],
+                                 currentStatuses: [.connected], timeout: 60) {
+        try session.startTunnel(options: [:])
+      }
     } catch {
+      session.stopVPNTunnel()
       DDLogError("Failed to start VPN: \(error.localizedDescription)")
       throw OutlineError.setupSystemVPNFailed(cause: error)
     }
-
-    // Wait for it to be done.
-    await startDone.value
 
     switch manager.connection.status {
     case .connected:
@@ -144,7 +114,7 @@ public class OutlineVpn: NSObject {
       DDLogWarn("Trying to stop tunnel \(tunnelId) that is not running")
       return
     }
-    await stopSession(manager)
+    _ = await stopSession(manager)
   }
 
   /** Calls |observer| when the VPN's status changes. */
@@ -165,7 +135,7 @@ public class OutlineVpn: NSObject {
 
   public func stopActiveVpn() async {
     if let manager = await getTunnelManager() {
-      await stopSession(manager)
+      _ = await stopSession(manager)
     }
   }
 
@@ -257,29 +227,80 @@ private func isActiveSession(_ session: NEVPNConnection?) -> Bool {
   return vpnStatus == .connected || vpnStatus == .connecting || vpnStatus == .reasserting
 }
 
-private func stopSession(_ manager:NETunnelProviderManager) async {
+private func stopSession(_ manager: NETunnelProviderManager) async -> Bool {
   do {
     try await manager.loadFromPreferences()
-    await setConnectVpnOnDemand(manager, false) // Disable on demand so the VPN does not connect automatically.
-    manager.connection.stopVPNTunnel()
-    // Wait for stop to be completed.
-    class TokenHolder {
-      var token: NSObjectProtocol?
+    await setConnectVpnOnDemand(manager, false)
+    try await waitForVPNStatus(manager.connection, terminalStatuses: [.disconnected, .invalid],
+                               currentStatuses: [.disconnected, .invalid], timeout: 15) {
+      manager.connection.stopVPNTunnel()
     }
-    let tokenHolder = TokenHolder()
-    await withCheckedContinuation { continuation in
-      tokenHolder.token = NotificationCenter.default.addObserver(forName: .NEVPNStatusDidChange, object: manager.connection, queue: nil) { notification in
-        if manager.connection.status == .disconnected {
-          DDLogDebug("Tunnel stopped. Ready to start again.")
-          if let token = tokenHolder.token {
-            NotificationCenter.default.removeObserver(token, name: .NEVPNStatusDidChange, object: manager.connection)
-          }
-          continuation.resume()
-        }
+    return true
+  } catch {
+    DDLogWarn("Failed to stop VPN: \(error.localizedDescription)")
+    return false
+  }
+}
+
+// Register synchronously before starting the operation. Notifications, errors and
+// the timeout can race, so the continuation and observer must be finished once.
+private final class VPNStatusWaiter: @unchecked Sendable {
+  private let lock = NSLock()
+  private var continuation: CheckedContinuation<Void, Error>?
+  private var observer: NSObjectProtocol?
+  private var timeoutWork: DispatchWorkItem?
+
+  init(_ continuation: CheckedContinuation<Void, Error>) {
+    self.continuation = continuation
+  }
+
+  func observe(_ connection: NEVPNConnection, statuses: [NEVPNStatus], timeout: TimeInterval) {
+    lock.lock()
+    observer = NotificationCenter.default.addObserver(forName: .NEVPNStatusDidChange,
+                                                       object: connection, queue: nil) { [self] _ in
+      if statuses.contains(connection.status) {
+        finish(.success(()))
       }
     }
-  } catch {
-    DDLogWarn("Failed to stop VPN")
+    let work = DispatchWorkItem { [self] in
+      finish(.failure(OutlineError.internalError(message: "VPN status change timed out")))
+    }
+    timeoutWork = work
+    lock.unlock()
+    DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: work)
+  }
+
+  func finish(_ result: Result<Void, Error>) {
+    lock.lock()
+    let continuation = self.continuation
+    self.continuation = nil
+    let observer = self.observer
+    self.observer = nil
+    let timeoutWork = self.timeoutWork
+    self.timeoutWork = nil
+    lock.unlock()
+    if let observer = observer {
+      NotificationCenter.default.removeObserver(observer)
+    }
+    timeoutWork?.cancel()
+    continuation?.resume(with: result)
+  }
+}
+
+private func waitForVPNStatus(_ connection: NEVPNConnection, terminalStatuses: [NEVPNStatus],
+                              currentStatuses: [NEVPNStatus], timeout: TimeInterval,
+                              action: () throws -> Void) async throws {
+  try await withCheckedThrowingContinuation { continuation in
+    let waiter = VPNStatusWaiter(continuation)
+    waiter.observe(connection, statuses: terminalStatuses, timeout: timeout)
+    do {
+      try action()
+      if currentStatuses.contains(connection.status) {
+        waiter.finish(.success(()))
+      }
+    } catch {
+      waiter.finish(.failure(error))
+    }
   }
 }
 
