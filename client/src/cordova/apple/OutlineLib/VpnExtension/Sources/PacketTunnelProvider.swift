@@ -35,13 +35,24 @@ public class SwiftBridge: NSObject {
       // More specific than the existing 198.18.0.0/15 private-network exclusion.
       // Keep this route even after all rules are removed, for cached DNS answers.
       ipv4Settings.includedRoutes?.append(NEIPv4Route(destinationAddress: "198.18.0.0", subnetMask: "255.255.0.0"))
+      // The resolver is link-local; an explicit host route keeps queries off Wi-Fi.
+      ipv4Settings.includedRoutes?.append(NEIPv4Route(destinationAddress: "169.254.113.53", subnetMask: "255.255.255.255"))
     }
     ipv4Settings.excludedRoutes = getExcludedIpv4Routes()
     settings.ipv4Settings = ipv4Settings
 
     // A "fake" local DNS resolver. Outline will intercept the real resolver at this address.
     // Must align with: client/go/outline/configregistry/outline_dns_intercept.go
-    settings.dnsSettings = NEDNSSettings(servers: ["169.254.113.53"])
+    let dnsSettings = NEDNSSettings(servers: ["169.254.113.53"])
+    if let data = domainExclusions.data(using: .utf8),
+       let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+       let domains = config["domains"] as? [String], !domains.isEmpty {
+      // Specific matches take precedence over another VPN's catch-all resolver.
+      // Keep the default resolver behavior for all other queries.
+      dnsSettings.matchDomains = [""] + domains
+      dnsSettings.matchDomainsNoSearch = true
+    }
+    settings.dnsSettings = dnsSettings
 
     return settings
   }

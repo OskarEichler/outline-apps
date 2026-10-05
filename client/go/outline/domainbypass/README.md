@@ -8,7 +8,10 @@ tunnel and takes effect on the next connection, including an OS-initiated start.
 The packet tunnel intercepts its existing synthetic DNS resolver over UDP and
 TCP. An excluded hostname receives a synthetic IPv4 address in `198.18.0.0/16`.
 Its TCP and UDP flows are resolved and dialed directly by the Network Extension,
-whose sockets are outside its own tunnel. Other DNS questions and destinations
+whose sockets are outside its own tunnel. The Apple settings include a host route
+for the link-local resolver and explicit DNS matches for selected domains, so
+another VPN’s catch-all resolver cannot hide the rules. IPv4-mapped IPv6
+destinations are normalized before matching. Other DNS questions and destinations
 keep the original proxy transport, including its UDP connectivity fallback.
 Direct DNS uses Cloudflare (`1.1.1.1:53`) through the extension's direct sockets;
 a failed lookup fails the connection, rather than falling back to another route.
@@ -53,3 +56,10 @@ removed-rule behavior, unknown synthetic addresses, and concurrent send/close.
 The UI is type-checked, linted, built and visually inspected with a browser
 fixture. Native compilation and signing are checked separately from live VPN
 routing. Live VPN verification must confirm both excluded and ordinary egress before release.
+
+Live macOS verification passed with a concurrent Tailscale tunnel: system DNS
+and DNS over TCP/UDP return synthetic addresses for selected names, excluded
+HTTPS uses the regular public IP, ordinary HTTPS uses the VPN exit, and removing
+a rule sends both fresh and cached TCP destinations back through the proxy.
+The Chrome automation initialization also succeeded with the VPN enabled and
+the target domain excluded. Installed native UI interaction remains unverified.

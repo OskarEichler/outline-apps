@@ -65,6 +65,7 @@ func (r *Router) DialStream(ctx context.Context, address string) (transport.Stre
 	if err != nil {
 		return r.fallback.DialStream(ctx, address)
 	}
+	dst = netip.AddrPortFrom(dst.Addr().Unmap(), dst.Port())
 	if dst == dnsAddress {
 		select {
 		case r.dnsSlots <- struct{}{}:

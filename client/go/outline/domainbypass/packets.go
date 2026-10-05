@@ -99,6 +99,7 @@ func (a *association) ReceivePackets(handler packetrelay.PacketHandler) error {
 }
 
 func (a *association) SendPacket(p []byte, destination netip.AddrPort) error {
+	destination = netip.AddrPortFrom(destination.Addr().Unmap(), destination.Port())
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.closed {
