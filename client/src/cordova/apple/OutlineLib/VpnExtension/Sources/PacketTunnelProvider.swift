@@ -22,7 +22,7 @@ import Tun2socks
 public class SwiftBridge: NSObject {
 
   /** Helper function that we can call from Objective-C. */
-  public static func getTunnelNetworkSettings() -> NEPacketTunnelNetworkSettings {
+  public static func getTunnelNetworkSettings(domainExclusions: String = "") -> NEPacketTunnelNetworkSettings {
     // The remote address is not required, but needs to be valid, or else you get a
     // "Invalid NETunnelNetworkSettings tunnelRemoteAddress" error.
     let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "::")
@@ -31,6 +31,11 @@ public class SwiftBridge: NSObject {
     let vpnAddress = selectVpnAddress(interfaceAddresses: getNetworkInterfaceAddresses())
     let ipv4Settings = NEIPv4Settings(addresses: [vpnAddress], subnetMasks: ["255.255.255.0"])
     ipv4Settings.includedRoutes = [NEIPv4Route.default()]
+    if !domainExclusions.isEmpty {
+      // More specific than the existing 198.18.0.0/15 private-network exclusion.
+      // Keep this route even after all rules are removed, for cached DNS answers.
+      ipv4Settings.includedRoutes?.append(NEIPv4Route(destinationAddress: "198.18.0.0", subnetMask: "255.255.0.0"))
+    }
     ipv4Settings.excludedRoutes = getExcludedIpv4Routes()
     settings.ipv4Settings = ipv4Settings
 
@@ -42,8 +47,9 @@ public class SwiftBridge: NSObject {
   }
 
   /** Creates a new Outline Client based on the given transportConfig. */
-  public static func newClient(id: String, transportConfig: String) -> OutlineNewClientResult {
+  public static func newClient(id: String, transportConfig: String, domainExclusions: String) -> OutlineNewClientResult {
     let clientConfig = OutlineClientConfig()
+    clientConfig.domainExclusions = domainExclusions
     do {
       clientConfig.dataDir = try FileManager.default.url(
         for: .applicationSupportDirectory,

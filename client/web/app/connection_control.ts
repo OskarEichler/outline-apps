@@ -26,6 +26,7 @@ export interface ControlRequest {
   server?: string;
   expected?: string;
   deadline?: number;
+  domains?: string[];
 }
 
 // Both GUI buttons and local CLI commands enter this queue. In particular,
@@ -55,7 +56,11 @@ export class ConnectionControl {
   async request(
     request: ControlRequest,
     snapshot: () => Promise<VpnSnapshot>,
-    stop: () => Promise<void>
+    stop: () => Promise<void>,
+    exclusions?: {
+      read: () => Promise<object>;
+      write: (domains: string[]) => Promise<object>;
+    }
   ): Promise<object> {
     if (
       ![
@@ -65,12 +70,16 @@ export class ConnectionControl {
         'disconnect',
         'reconnect',
         'recover',
+        'exclusions',
+        'set-exclusions',
       ].includes(request.action)
     ) {
       return {ok: false, error: 'unknown_command'};
     }
     const automatic = request.action === 'recover';
-    const readOnly = ['status', 'servers'].includes(request.action);
+    const readOnly = ['status', 'servers', 'exclusions'].includes(
+      request.action
+    );
     if (!automatic && !readOnly) this.generation++;
     const generation = this.generation;
     const describe = async () => ({
@@ -82,6 +91,10 @@ export class ConnectionControl {
     // Read-only commands can report status even when a tunnel operation stalls.
     if (readOnly) {
       try {
+        if (request.action === 'exclusions') {
+          if (!exclusions) return {ok: false, error: 'unsupported_platform'};
+          return {ok: true, ...(await exclusions.read())};
+        }
         return {ok: true, ...(await describe())};
       } catch {
         return {ok: false, error: 'status_unavailable'};
@@ -91,6 +104,27 @@ export class ConnectionControl {
       try {
         if (!request.deadline || Date.now() >= request.deadline) {
           return {ok: false, error: 'request_expired'};
+        }
+        if (request.action === 'set-exclusions') {
+          if (!exclusions) return {ok: false, error: 'unsupported_platform'};
+          if (
+            !Array.isArray(request.domains) ||
+            request.domains.length > 100 ||
+            request.domains.some(
+              domain => typeof domain !== 'string' || domain.length > 253
+            )
+          ) {
+            return {ok: false, error: 'invalid_domains'};
+          }
+          const state = await snapshot();
+          if (
+            state.state !== 'disconnected' ||
+            state.desiredConnected ||
+            state.onDemand
+          ) {
+            return {ok: false, error: 'disconnect_before_saving'};
+          }
+          return {ok: true, ...(await exclusions.write(request.domains))};
         }
         if (request.action === 'disconnect') {
           await stop();

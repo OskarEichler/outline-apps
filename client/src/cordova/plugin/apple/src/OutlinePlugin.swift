@@ -107,6 +107,62 @@ class OutlinePlugin: CDVPlugin {
     }
   }
 
+  // Local user policy is kept outside provider access keys and copied into the
+  // tunnel profile. Mutations enter the same JS operation queue as connect/stop.
+  func getDomainExclusions(_ command: CDVInvokedUrlCommand) {
+    Task {
+      let text = UserDefaults.standard.string(forKey: OutlineVpn.domainExclusionsKey) ?? "{}"
+      let config = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any]
+      let snapshot = await OutlineVpn.shared.controlSnapshot()
+      let result = CDVPluginResult(status: CDVCommandStatus_OK, messageAs: [
+        "domains": config?["domains"] as? [String] ?? [],
+        "canSave": snapshot["state"] as? String == "disconnected" && snapshot["desiredConnected"] as? Bool == false && snapshot["onDemand"] as? Bool == false
+      ])
+      self.commandDelegate.send(result, callbackId: command.callbackId)
+    }
+  }
+
+  func setDomainExclusions(_ command: CDVInvokedUrlCommand) {
+    Task {
+      do {
+        let snapshot = await OutlineVpn.shared.controlSnapshot()
+        guard snapshot["state"] as? String == "disconnected", snapshot["desiredConnected"] as? Bool == false,
+              snapshot["onDemand"] as? Bool == false else {
+          return sendError("Disconnect Outline before saving exclusions.", callbackId: command.callbackId)
+        }
+        guard let domains = command.argument(at: 0) as? [String], domains.count <= 100 else {
+          return sendError("Enter at most 100 domains.", callbackId: command.callbackId)
+        }
+        let previous = UserDefaults.standard.string(forKey: OutlineVpn.domainExclusionsKey) ?? "{}"
+        var config = try JSONSerialization.jsonObject(with: Data(previous.utf8)) as? [String: Any] ?? [:]
+        let previousDomains = config["domains"] as? [String] ?? []
+        config["domains"] = domains
+        let data = try JSONSerialization.data(withJSONObject: config)
+        var validationError: NSError?
+        let normalized = OutlineNormalizeDomainExclusions(String(decoding: data, as: UTF8.self), &validationError)
+        if let validationError { throw validationError }
+        // Reserve new address slots before the asynchronous profile write. A
+        // crash or failed save must never let a later rule reuse a cached IP.
+        var reserved = try JSONSerialization.jsonObject(with: Data(normalized.utf8)) as! [String: Any]
+        reserved["domains"] = previousDomains
+        let reservedData = try JSONSerialization.data(withJSONObject: reserved)
+        UserDefaults.standard.set(String(decoding: reservedData, as: UTF8.self), forKey: OutlineVpn.domainExclusionsKey)
+        // Also update the saved profile so starting from macOS Settings uses the
+        // new rules. No tunnel is started by saving this preference.
+        let managers = try await NETunnelProviderManager.loadAllFromPreferences()
+        if let manager = managers.first,
+           let proto = manager.protocolConfiguration as? NETunnelProviderProtocol {
+          proto.providerConfiguration?["domainExclusions"] = normalized as String
+          try await manager.saveToPreferences()
+        }
+        UserDefaults.standard.set(normalized as String, forKey: OutlineVpn.domainExclusionsKey)
+        getDomainExclusions(command)
+      } catch {
+        sendError("Could not save. Use exact domain names, without URLs, IP addresses or wildcards.", callbackId: command.callbackId)
+      }
+    }
+  }
+
   func controlDisconnect(_ command: CDVInvokedUrlCommand) {
     Task {
       await OutlineVpn.shared.controlDisconnect()

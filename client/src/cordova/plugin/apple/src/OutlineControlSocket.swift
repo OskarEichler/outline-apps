@@ -105,12 +105,12 @@ final class OutlineControlSocket {
     var data = Data()
     var byte: UInt8 = 0
     let deadline = Date().addingTimeInterval(5)
-    while data.count < 4096 && Date() < deadline {
+    while data.count < 32768 && Date() < deadline {
       guard Darwin.read(fd, &byte, 1) == 1 else { return }
       if byte == 10 { break }
       data.append(byte)
     }
-    guard byte == 10, data.count < 4096,
+    guard byte == 10, data.count < 32768,
           var request = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
           request["v"] as? Int == 1 else {
       reply(fd, ["ok": false, "error": "invalid_request"])

@@ -25,6 +25,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -37,9 +38,10 @@ func run() int {
 	flags := flag.NewFlagSet("outlinectl", flag.ContinueOnError)
 	socket := flags.String("socket", filepath.Join(home, "Library/Containers/org.outline.macos.client/Data/.outline-cli/control.sock"), "Outline app's Unix socket")
 	server := flags.String("server", "", "exact saved server name or ID")
+	domains := flags.String("domains", "", "comma-separated exact domains for set-exclusions; empty clears the list")
 	expected := flags.String("expect-active", "", "required current server ID for watchdog recovery")
 	flags.Usage = func() {
-		fmt.Fprintln(flags.Output(), "Usage: outlinectl [flags] status|servers|connect|disconnect|reconnect|recover\nFlags must precede the command. connect/reconnect require --server.\nrecover requires --server and --expect-active and respects manual disconnection.")
+		fmt.Fprintln(flags.Output(), "Usage: outlinectl [flags] status|servers|connect|disconnect|reconnect|recover|exclusions|set-exclusions\nFlags must precede the command. connect/reconnect require --server.\nrecover requires --server and --expect-active and respects manual disconnection.")
 		flags.PrintDefaults()
 	}
 	if err := flags.Parse(os.Args[1:]); err != nil {
@@ -54,7 +56,7 @@ func run() int {
 	}
 	action := flags.Arg(0)
 	switch action {
-	case "status", "servers", "disconnect":
+	case "status", "servers", "disconnect", "exclusions", "set-exclusions":
 		if *server != "" || *expected != "" {
 			fmt.Fprintln(os.Stderr, "This command takes no server flags")
 			return 2
@@ -73,11 +75,38 @@ func run() int {
 		flags.Usage()
 		return 2
 	}
+	domainsProvided := false
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "domains" {
+			domainsProvided = true
+		}
+	})
+	if domainsProvided != (action == "set-exclusions") {
+		fmt.Fprintln(os.Stderr, "Use --domains only with set-exclusions (empty clears the list)")
+		return 2
+	}
 	if len(*server) > 256 || len(*expected) > 256 {
 		fmt.Fprintln(os.Stderr, "Server identifier too long")
 		return 2
 	}
 	request := map[string]any{"v": 1, "action": action, "server": *server, "expected": *expected}
+	if action == "set-exclusions" {
+		entries := []string{}
+		if *domains != "" {
+			entries = strings.Split(*domains, ",")
+		}
+		if len(entries) > 100 {
+			fmt.Fprintln(os.Stderr, "At most 100 domains")
+			return 2
+		}
+		for _, entry := range entries {
+			if len(entry) > 253 {
+				fmt.Fprintln(os.Stderr, "Domain too long")
+				return 2
+			}
+		}
+		request["domains"] = entries
+	}
 	conn, err := net.DialTimeout("unix", *socket, 3*time.Second)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Cannot reach the Outline command bridge. Install and run a compatible macOS Outline app. No VPN changes made.")

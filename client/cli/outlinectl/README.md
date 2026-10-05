@@ -48,3 +48,24 @@ The socket's parent directory is mode 0700, and the app checks that peers use
 the same macOS user ID. No TCP port or URL command handler is exposed.
 Processes running as the same user are trusted to control the VPN. For a custom
 bundle ID, pass `--socket` with that app's sandbox socket path.
+
+## Domain exclusions
+
+On the Apple client, the **Domain exclusions** menu page and CLI edit the same
+local policy for all servers. Disconnect manually before saving; the next
+connection applies the new list. Provider access keys cannot change this policy.
+
+```sh
+outlinectl exclusions
+outlinectl disconnect
+outlinectl --domains 'ab.chatgpt.com,example.com' set-exclusions
+outlinectl --server Singapore connect
+# Clear all rules while disconnected:
+outlinectl --domains '' set-exclusions
+```
+
+Up to 100 exact hostnames are supported; subdomains must be listed separately.
+The response includes `canSave` and the normalized saved `domains`. Excluded
+traffic uses the regular connection and public IP. Applications using private
+secure DNS or cached real addresses may not use the exclusions. See
+[the routing design](../../go/outline/domainbypass/README.md) for details.

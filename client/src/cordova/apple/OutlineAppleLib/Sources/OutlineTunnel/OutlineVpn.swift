@@ -20,6 +20,7 @@ import OutlineError
 @objcMembers
 public class OutlineVpn: NSObject {
   public static let shared = OutlineVpn()
+  public static let domainExclusionsKey = "OutlineDomainExclusions"
   private static let desiredConnectedKey = "OutlineControlDesiredConnected"
   private static let kVpnExtensionBundleId = "\(Bundle.main.bundleIdentifier!).VpnExtension"
 
@@ -206,7 +207,8 @@ public class OutlineVpn: NSObject {
     config.providerBundleIdentifier = OutlineVpn.kVpnExtensionBundleId
     config.providerConfiguration = [
       ConfigKey.tunnelId: id,
-      ConfigKey.transport: transportConfig
+      ConfigKey.transport: transportConfig,
+      "domainExclusions": UserDefaults.standard.string(forKey: Self.domainExclusionsKey) ?? ""
     ]
     manager.protocolConfiguration = config
 

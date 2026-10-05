@@ -877,6 +877,13 @@ export class App {
     return !('cordova' in window);
   }
 
+  enableDomainExclusions(
+    request: import('../views/domain_exclusions_view').DomainExclusionsView['request']
+  ) {
+    this.rootEl.showDomainExclusions = true;
+    this.rootEl.$.domainExclusionsView.request = request;
+  }
+
   private setAppearance(appearance: Appearance) {
     const documentClassList = window.document.documentElement.classList;
     const isSystemDark = matchMedia('(prefers-color-scheme: dark)').matches;
