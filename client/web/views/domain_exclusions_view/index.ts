@@ -119,11 +119,7 @@ export class DomainExclusionsView extends LitElement {
         .filter(Boolean);
       const result = await this.request!(domains);
       if (!result.ok) {
-        this.message = this.localize(
-          result.error === 'disconnect_before_saving'
-            ? 'domain-exclusions-disconnect'
-            : 'domain-exclusions-save-error'
-        );
+        this.message = this.localize('domain-exclusions-save-error');
         return;
       }
       this.text = (result.domains ?? []).join('\n');
@@ -152,9 +148,7 @@ export class DomainExclusionsView extends LitElement {
           this.text = (event.target as HTMLTextAreaElement).value;
         }}
       ></textarea>
-      ${!this.canSave
-        ? html`<p>${this.localize('domain-exclusions-disconnect')}</p>`
-        : ''}
+      <p>${this.localize('domain-exclusions-reconnect')}</p>
       <div class="actions">
         <md-filled-button
           ?disabled=${this.busy || !this.canSave}

@@ -2,8 +2,9 @@
 
 Device-owned settings are kept outside access keys. The UI accepts up to 100
 exact hostnames (Unicode names are normalized to IDNA). Empty lists are the
-default. Rules apply to all saved servers. Saving requires a manually disconnected
-tunnel and takes effect on the next connection, including an OS-initiated start.
+default. Rules apply to all saved servers. Saving is allowed while connected and
+takes effect on the next connection, including an OS-initiated start. The running
+provider retains its startup policy until reconnect.
 
 The packet tunnel intercepts its existing synthetic DNS resolver over UDP and
 TCP. An excluded hostname receives a synthetic IPv4 address in `198.18.0.0/16`.
@@ -26,7 +27,7 @@ Addresses are allocated from a persistent, append-only hostname registry, capped
 at 4,096 historical names. Removing a rule never reassigns its address. Cached
 TCP connections to a removed name go through the proxy; cached UDP flows are
 rejected until a fresh DNS lookup obtains the ordinary address. Active flows end
-when the user disconnects before editing. DNS answers have a one-second TTL.
+when the user disconnects or reconnects. DNS answers have a one-second TTL.
 Unknown synthetic addresses are rejected. The more-specific included `/16`
 route must override Outline's existing excluded `198.18.0.0/15` range.
 

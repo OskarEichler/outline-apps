@@ -21,6 +21,9 @@ import OutlineSentryLogger
 import OutlineTunnel
 import Sentry
 import Tun2socks
+#if targetEnvironment(macCatalyst)
+import OutlineCatalystApp
+#endif
 
 public enum TunnelStatus: Int {
   case connected = 0
@@ -99,6 +102,15 @@ class OutlinePlugin: CDVPlugin {
     sendSuccess(callbackId: command.callbackId)
   }
 
+  func getAppVersion(_ command: CDVInvokedUrlCommand) {
+    let info = Bundle.main.infoDictionary ?? [:]
+    let result = CDVPluginResult(status: CDVCommandStatus_OK, messageAs: [
+      "version": info["CFBundleShortVersionString"] as? String ?? "",
+      "build": info["CFBundleVersion"] as? String ?? ""
+    ])
+    commandDelegate.send(result, callbackId: command.callbackId)
+  }
+
   func controlSnapshot(_ command: CDVInvokedUrlCommand) {
     Task {
       let snapshot = await OutlineVpn.shared.controlSnapshot()
@@ -113,10 +125,9 @@ class OutlinePlugin: CDVPlugin {
     Task {
       let text = UserDefaults.standard.string(forKey: OutlineVpn.domainExclusionsKey) ?? "{}"
       let config = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any]
-      let snapshot = await OutlineVpn.shared.controlSnapshot()
       let result = CDVPluginResult(status: CDVCommandStatus_OK, messageAs: [
         "domains": config?["domains"] as? [String] ?? [],
-        "canSave": snapshot["state"] as? String == "disconnected" && snapshot["desiredConnected"] as? Bool == false && snapshot["onDemand"] as? Bool == false
+        "canSave": true
       ])
       self.commandDelegate.send(result, callbackId: command.callbackId)
     }
@@ -125,11 +136,6 @@ class OutlinePlugin: CDVPlugin {
   func setDomainExclusions(_ command: CDVInvokedUrlCommand) {
     Task {
       do {
-        let snapshot = await OutlineVpn.shared.controlSnapshot()
-        guard snapshot["state"] as? String == "disconnected", snapshot["desiredConnected"] as? Bool == false,
-              snapshot["onDemand"] as? Bool == false else {
-          return sendError("Disconnect Outline before saving exclusions.", callbackId: command.callbackId)
-        }
         guard let domains = command.argument(at: 0) as? [String], domains.count <= 100 else {
           return sendError("Enter at most 100 domains.", callbackId: command.callbackId)
         }
@@ -148,7 +154,8 @@ class OutlinePlugin: CDVPlugin {
         let reservedData = try JSONSerialization.data(withJSONObject: reserved)
         UserDefaults.standard.set(String(decoding: reservedData, as: UTF8.self), forKey: OutlineVpn.domainExclusionsKey)
         // Also update the saved profile so starting from macOS Settings uses the
-        // new rules. No tunnel is started by saving this preference.
+        // new rules. The running provider retains its startup snapshot; saving
+        // does not stop, restart or reconfigure the active tunnel.
         let managers = try await NETunnelProviderManager.loadAllFromPreferences()
         if let manager = managers.first,
            let proto = manager.protocolConfiguration as? NETunnelProviderProtocol {
@@ -264,6 +271,9 @@ class OutlinePlugin: CDVPlugin {
             message: "configuration is not a string"
           )
         }
+        #if targetEnvironment(macCatalyst)
+          try await OutlineCatalystApp.activateSystemExtension()
+        #endif
         try await OutlineVpn.shared.start(
           tunnelId,
           named: name,

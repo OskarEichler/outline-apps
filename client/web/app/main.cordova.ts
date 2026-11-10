@@ -25,7 +25,7 @@ setRootPath(
 
 import {AbstractClipboard} from './clipboard';
 import {ControlRequest, VpnSnapshot} from './connection_control';
-import {EnvironmentVariables} from './environment';
+import {EnvironmentVariables, onceEnvVars} from './environment';
 import {main} from './main';
 import {installDefaultMethodChannel, MethodChannel} from './method_channel';
 import {VpnApi} from './outline_server_repository/vpn';
@@ -157,6 +157,15 @@ window.handleOpenURL = (url: string) => {
 document.addEventListener('deviceready', async () => {
   installDefaultMethodChannel(new CordovaMethodChannel());
   try {
+    if (cordova.platformId === 'ios') {
+      // The native bundle owns the installed version, including custom builds.
+      const env = await onceEnvVars;
+      const info = await pluginExec<{version: string; build: string}>(
+        'getAppVersion'
+      );
+      env.APP_VERSION = info.version;
+      env.APP_BUILD_NUMBER = info.build;
+    }
     const app = await main(new CordovaPlatform());
     if (app && cordova.platformId === 'ios') {
       const exclusions = {

@@ -22,10 +22,35 @@
 
     @objcMembers
     public class OutlineCatalystApp: NSObject {
+        private static var appKitController: NSObject?
+        /// Custom macOS builds package the provider as a native system extension.
+        /// Keep activation in the existing AppKit bridge; iOS/appex builds need none.
+        public static func activateSystemExtension() async throws {
+            let extensionPath = Bundle.main.bundleURL.appendingPathComponent(
+                "Contents/Library/SystemExtensions/\(Bundle.main.bundleIdentifier!).VpnExtension.systemextension").path
+            guard FileManager.default.fileExists(atPath: extensionPath) else { return }
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                DispatchQueue.main.async {
+                    let selector = NSSelectorFromString("_AppKitBridge_activateSystemExtension:")
+                    guard let controller = appKitController, controller.responds(to: selector) else {
+                        continuation.resume(throwing: NSError(domain: "OutlineSystemExtension", code: 1,
+                            userInfo: [NSLocalizedDescriptionKey: "The VPN extension could not be activated. Reopen Outline and try again."]))
+                        return
+                    }
+                    let completion: @convention(block) (NSError?) -> Void = { error in
+                        if let error { continuation.resume(throwing: error) }
+                        else { continuation.resume() }
+                    }
+                    _ = controller.perform(selector, with: completion as AnyObject)
+                }
+            }
+        }
+
         public static func initApp() {
             DDLog.add(DDOSLogger.sharedInstance)
 
             let appKitController = loadAppKitIntegrationFramework()
+            Self.appKitController = appKitController
 
             // Configure the window.
             let scenes = UIApplication.shared.connectedScenes

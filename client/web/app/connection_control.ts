@@ -116,14 +116,6 @@ export class ConnectionControl {
           ) {
             return {ok: false, error: 'invalid_domains'};
           }
-          const state = await snapshot();
-          if (
-            state.state !== 'disconnected' ||
-            state.desiredConnected ||
-            state.onDemand
-          ) {
-            return {ok: false, error: 'disconnect_before_saving'};
-          }
           return {ok: true, ...(await exclusions.write(request.domains))};
         }
         if (request.action === 'disconnect') {

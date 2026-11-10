@@ -52,15 +52,14 @@ bundle ID, pass `--socket` with that app's sandbox socket path.
 ## Domain exclusions
 
 On the Apple client, the **Domain exclusions** menu page and CLI edit the same
-local policy for all servers. Disconnect manually before saving; the next
-connection applies the new list. Provider access keys cannot change this policy.
+local policy for all servers. Save while connected or disconnected; the next
+connection applies the new list. Saving leaves the active connection unchanged. Provider access keys cannot change this policy.
 
 ```sh
 outlinectl exclusions
-outlinectl disconnect
 outlinectl --domains 'ab.chatgpt.com,example.com' set-exclusions
-outlinectl --server Singapore connect
-# Clear all rules while disconnected:
+outlinectl --server Singapore reconnect
+# Save an empty list (applied on the next connection):
 outlinectl --domains '' set-exclusions
 ```
 
