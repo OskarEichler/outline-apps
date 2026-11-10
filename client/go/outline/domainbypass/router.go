@@ -23,6 +23,7 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.getoutline.org/sdk/network/packetrelay"
@@ -36,6 +37,8 @@ var dnsAddress = netip.MustParseAddrPort("169.254.113.53:53")
 // Router has immutable rules for one tunnel session. Connections are owned by
 // the network stack, and all DNS work has bounded time and memory.
 type Router struct {
+	mu       sync.RWMutex
+	registry *wildcardRegistry
 	fallback transport.StreamDialer
 	relay    packetrelay.PacketRelay
 	direct   transport.StreamDialer
@@ -81,12 +84,12 @@ func (r *Router) DialStream(ctx context.Context, address string) (transport.Stre
 		return &dnsStream{client}, nil
 	}
 	if syntheticRange.Contains(dst.Addr()) {
-		host, ok := r.hosts[dst.Addr()]
+		host, ok := r.hostForIP(dst.Addr())
 		if !ok {
 			return nil, errors.New("unknown synthetic address")
 		}
 		address = net.JoinHostPort(host, strconv.Itoa(int(dst.Port())))
-		if r.active[host] {
+		if r.matches(host) {
 			return r.direct.DialStream(ctx, address)
 		}
 		// A removed rule may still have cached DNS answers. Route it through the
@@ -107,7 +110,7 @@ func (r *Router) dnsResponse(query []byte) ([]byte, error) {
 	}
 	question := q.Questions[0]
 	domain := strings.ToLower(strings.TrimSuffix(question.Name.String(), "."))
-	if !r.active[domain] || question.Class != dnsmessage.ClassINET {
+	if !r.matches(domain) || question.Class != dnsmessage.ClassINET {
 		return nil, nil
 	}
 	switch question.Type {
@@ -119,8 +122,14 @@ func (r *Router) dnsResponse(query []byte) ([]byte, error) {
 	response := dnsmessage.Message{Header: dnsmessage.Header{ID: q.ID, Response: true,
 		RecursionDesired: q.RecursionDesired, RecursionAvailable: true}, Questions: q.Questions}
 	if question.Type == dnsmessage.TypeA {
+		ip, err := r.addressForHost(domain)
+		if err != nil {
+			// Do not expose a synthetic address until its ownership is durable.
+			response.RCode = dnsmessage.RCodeServerFailure
+			return response.Pack()
+		}
 		response.Answers = []dnsmessage.Resource{{Header: dnsmessage.ResourceHeader{Name: question.Name,
-			Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET, TTL: 1}, Body: &dnsmessage.AResource{A: r.domains[domain].As4()}}}
+			Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET, TTL: 1}, Body: &dnsmessage.AResource{A: ip.As4()}}}
 	}
 	// AAAA and HTTPS/SVCB return NODATA so IPv6/HTTPS address hints cannot skip
 	// the synthetic route. The actual direct connection can still use IPv6.
@@ -185,3 +194,60 @@ type dnsStream struct{ net.Conn }
 
 func (c *dnsStream) CloseRead() error  { return c.Close() }
 func (c *dnsStream) CloseWrite() error { return c.Close() }
+
+func (r *Router) matches(host string) bool {
+	if r.active[host] {
+		return true
+	}
+	for i := strings.IndexByte(host, '.'); i >= 0; i = strings.IndexByte(host, '.') {
+		host = host[i+1:]
+		if r.active["*."+host] {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Router) hostForIP(ip netip.Addr) (string, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	host, ok := r.hosts[ip]
+	return host, ok
+}
+
+func (r *Router) addressForHost(host string) (netip.Addr, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if ip, ok := r.domains[host]; ok {
+		return ip, nil
+	}
+	if r.registry == nil {
+		return netip.Addr{}, errors.New("wildcard registry unavailable")
+	}
+	ip, err := r.registry.reserve(host)
+	if err != nil {
+		return netip.Addr{}, err
+	}
+	r.domains[host], r.hosts[ip] = ip, host
+	return ip, nil
+}
+
+// EnableWildcardRegistry also loads retired names so cached addresses never
+// change ownership or preserve a removed rule's direct-routing permission.
+func (r *Router) EnableWildcardRegistry(dataDir string) error {
+	registry, hosts, err := openWildcardRegistry(dataDir)
+	if err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.registry = registry
+	for i, host := range hosts {
+		ip := wildcardAddress(i)
+		r.hosts[ip] = host
+		if _, exists := r.domains[host]; !exists {
+			r.domains[host] = ip
+		}
+	}
+	return nil
+}

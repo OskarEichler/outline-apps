@@ -91,13 +91,14 @@ class OutlineServer implements Server {
     return this.startRequest?.firstHop || '';
   }
 
-  async connect() {
+  private async prepareStartRequest(): Promise<StartRequestJson> {
+    let request = this.startRequest;
     let connectionType: ConnectionType;
     if (this.serviceConfig instanceof DynamicServiceConfig) {
       const tunnelConfig = await fetchTunnelConfig(
         this.serviceConfig.transportConfigLocation
       );
-      this.startRequest = {
+      request = {
         id: this.id,
         name: this.name,
         firstHop: tunnelConfig.firstHop,
@@ -110,12 +111,21 @@ class OutlineServer implements Server {
 
     // Make sure the transport is not proxyless for now.
     // TODO remove this when proxyless is supported on the frontend
-    if (this.startRequest && connectionType === ConnectionType.DIRECT) {
+    if (request && connectionType === ConnectionType.DIRECT) {
       throw new errors.InvalidServiceConfiguration(
         'Proxyless connections are not supported'
       );
     }
 
+    return request;
+  }
+
+  async getClientConfig(): Promise<string> {
+    return (await this.prepareStartRequest()).client;
+  }
+
+  async connect() {
+    this.startRequest = await this.prepareStartRequest();
     try {
       await this.vpnApi.start(this.startRequest);
     } catch (cause) {

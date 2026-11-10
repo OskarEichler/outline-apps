@@ -117,8 +117,8 @@ func (a *association) SendPacket(p []byte, destination netip.AddrPort) error {
 		}
 	}
 	if syntheticRange.Contains(destination.Addr()) {
-		host, ok := a.router.hosts[destination.Addr()]
-		if !ok || !a.router.active[host] {
+		host, ok := a.router.hostForIP(destination.Addr())
+		if !ok || !a.router.matches(host) {
 			// An expired exclusion must never retain permission to send direct UDP.
 			// Drop cached UDP flows; the next DNS lookup will use the normal VPN route.
 			return errors.New("inactive synthetic UDP destination")

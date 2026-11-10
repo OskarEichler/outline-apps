@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package domainbypass implements opt-in, exact-hostname routing for Apple's
+// Package domainbypass implements opt-in hostname-pattern routing for Apple's
 // packet tunnel. Synthetic DNS addresses avoid bypassing unrelated CDN tenants.
 // Callers must route 198.18.0.0/16 into the tunnel and supply direct dialers whose
 // sockets and DNS lookups escape the tunnel. Never enable this on other platforms
@@ -60,7 +60,7 @@ func Parse(text string) (Config, error) {
 	active := []string{}
 	seen := map[string]bool{}
 	for _, d := range c.Domains {
-		d, err := normalize(d)
+		d, err := normalizeRule(d)
 		if err != nil {
 			return c, err
 		}
@@ -69,7 +69,7 @@ func Parse(text string) (Config, error) {
 		}
 		seen[d] = true
 		active = append(active, d)
-		if !known[d] {
+		if !strings.HasPrefix(d, "*.") && !known[d] {
 			if len(c.KnownDomains) >= 4096 {
 				return c, errors.New("domain registry is full")
 			}
@@ -86,7 +86,7 @@ func Parse(text string) (Config, error) {
 
 func normalize(input string) (string, error) {
 	d, err := idna.Lookup.ToASCII(strings.TrimSuffix(strings.ToLower(strings.TrimSpace(input)), "."))
-	invalid := errors.New("enter exact domain names, without URLs, IP addresses or wildcards")
+	invalid := errors.New("enter exact domain names, without URLs or IP addresses; wildcards must begin with *.")
 	if err != nil || len(d) > 253 || !strings.Contains(d, ".") {
 		return "", invalid
 	}
@@ -112,6 +112,26 @@ func normalize(input string) (string, error) {
 	}
 	if numeric {
 		return "", invalid
+	}
+	return d, nil
+}
+
+// Wildcards cover one or more subdomain labels, never the root hostname.
+func normalizeRule(input string) (string, error) {
+	input = strings.TrimSpace(input)
+	wildcard := strings.HasPrefix(input, "*.")
+	if wildcard {
+		input = strings.TrimPrefix(input, "*.")
+	}
+	d, err := normalize(input)
+	if err != nil {
+		return "", err
+	}
+	if wildcard {
+		if len(d) > 251 {
+			return "", errors.New("domain pattern is too long")
+		}
+		return "*." + d, nil
 	}
 	return d, nil
 }

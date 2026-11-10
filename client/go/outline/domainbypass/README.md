@@ -1,7 +1,10 @@
-# Exact domain exclusions (Apple packet tunnel)
+# Domain exclusions (Apple packet tunnel)
 
 Device-owned settings are kept outside access keys. The UI accepts up to 100
-exact hostnames (Unicode names are normalized to IDNA). Empty lists are the
+exact hostnames or leading `*.` patterns (Unicode names are normalized to IDNA).
+`*.example.com` matches one or more subdomain levels, including
+`a.b.example.com`, but not `example.com` or `notexample.com`. List the root
+separately to exclude the whole site. Empty lists are the
 default. Rules apply to all saved servers. Saving is allowed while connected and
 takes effect on the next connection, including an OS-initiated start. The running
 provider retains its startup policy until reconnect.
@@ -36,11 +39,29 @@ hints that could skip the synthetic mapping. The outbound connection can still
 use IPv6. This is hostname-based routing, not per-IP bypass: unrelated hosts on
 a shared CDN address remain tunneled.
 
+## Wildcard address storage
+
+Exact-name addresses retain their existing append-only registry and address
+range. Wildcard-discovered hosts use a separate append-only registry in the
+provider's private application-support directory and addresses starting at
+`198.18.128.1`. The file is mode 0600 and stores hostnames only, without URLs,
+content or visit timestamps. It preserves ownership across restarts and servers;
+removed patterns do not retain permission to bypass the proxy. Replacing a
+wildcard with an exact rule also preserves the old cached address's owner.
+
+Reservations are protected across threads/processes, written atomically and
+synced before DNS exposes the address. Both registries are capped at 4,096
+historical hostnames each. A full wildcard registry returns DNS SERVFAIL for new
+names instead of reusing addresses or silently bypassing policy. Existing names
+continue to resolve. Unknown cached synthetic addresses fail closed. Wildcard
+rules need a writable persistent provider data directory; Android/Electron do
+not expose this feature.
+
 ## Scope and limits
 
 - Implemented in the Apple packet-tunnel client; macOS is the verified platform.
   Android and Electron do not expose the setting or receive the local policy.
-- Exact names only, no wildcard or automatic subdomain expansion.
+- Exact names and leading `*.` patterns only; no embedded globs, IPs or URLs.
 - Apps must use the system DNS resolver. Private DoH/DoT, hard-coded IPs, and
   previously cached real IPs remain on their normal route. Restart affected apps
   after changing rules. An exclusion is not a guarantee for every app protocol.

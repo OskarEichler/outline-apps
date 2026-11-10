@@ -173,13 +173,25 @@ document.addEventListener('deviceready', async () => {
         write: (domains: string[]) =>
           pluginExec<object>('setDomainExclusions', domains),
       };
+      app.enableServerDiagnostics(
+        (config, speed, id) => pluginExec('measureServer', config, speed, id),
+        async id => {
+          await pluginExec('cancelServerMeasurement', id);
+        }
+      );
       const control = (request: ControlRequest) =>
-        app.connectionControl.request(
-          request,
-          () => pluginExec<VpnSnapshot>('controlSnapshot'),
-          () => pluginExec<void>('controlDisconnect'),
-          exclusions
-        );
+        ['latency', 'speed-test'].includes(request.action)
+          ? app.measureServer(
+              request.server ?? '',
+              request.action === 'speed-test',
+              request.measurementId ?? ''
+            )
+          : app.connectionControl.request(
+              request,
+              () => pluginExec<VpnSnapshot>('controlSnapshot'),
+              () => pluginExec<void>('controlDisconnect'),
+              exclusions
+            );
       app.enableDomainExclusions(
         async domains =>
           control({

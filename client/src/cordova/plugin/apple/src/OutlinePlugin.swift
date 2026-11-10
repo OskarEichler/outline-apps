@@ -102,6 +102,96 @@ class OutlinePlugin: CDVPlugin {
     sendSuccess(callbackId: command.callbackId)
   }
 
+  private func measurementReply(_ command: CDVInvokedUrlCommand, _ value: [String: Any]) {
+    commandDelegate.send(CDVPluginResult(status: CDVCommandStatus_OK, messageAs: value), callbackId: command.callbackId)
+  }
+
+  private func providerMeasurementMessage(_ session: NETunnelProviderSession, _ data: Data, timeout: Double = 45) async throws -> Data {
+    try await withCheckedThrowingContinuation { continuation in
+      let lock = NSLock()
+      var finished = false
+      let finish: (Result<Data, Error>) -> Void = { result in
+        lock.lock()
+        let alreadyFinished = finished
+        finished = true
+        lock.unlock()
+        if !alreadyFinished { continuation.resume(with: result) }
+      }
+      DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
+        finish(.failure(NSError(domain: "OutlineMeasurement", code: 1)))
+      }
+      do {
+        try session.sendProviderMessage(data) { response in
+          if let response { finish(.success(response)) }
+          else { finish(.failure(NSError(domain: "OutlineMeasurement", code: 2))) }
+        }
+      } catch { finish(.failure(error)) }
+    }
+  }
+
+  private func measurementConnectionIdentity() async throws -> String {
+    guard let manager = try await NETunnelProviderManager.loadAllFromPreferences().first else { return "none" }
+    return "\(manager.connection.status.rawValue):\(manager.connection.connectedDate?.timeIntervalSince1970 ?? 0)"
+  }
+
+  func measureServer(_ command: CDVInvokedUrlCommand) {
+    guard let config = command.argument(at: 0) as? String, config.utf8.count <= 131072,
+          let speed = command.argument(at: 1) as? Bool,
+          let id = command.argument(at: 2) as? String, id.count <= 64 else {
+      return measurementReply(command, ["ok": false, "error": "invalid_request"])
+    }
+    Task {
+      do {
+        let identity = try await measurementConnectionIdentity()
+        let manager = try await NETunnelProviderManager.loadAllFromPreferences().first
+        let data: Data
+        if let manager, manager.connection.status == .connected,
+           let session = manager.connection as? NETunnelProviderSession {
+          let capability = try await providerMeasurementMessage(session, Data("serverMeasurementsV1".utf8), timeout: 5)
+          guard capability == Data("1".utf8) else {
+            return measurementReply(command, ["ok": false, "error": "reconnect_required"])
+          }
+          let request = try JSONSerialization.data(withJSONObject: ["action": "measureServer", "config": config, "speed": speed, "measurementId": id])
+          data = try await providerMeasurementMessage(session, request)
+        } else {
+          let state = await OutlineVpn.shared.controlSnapshot()
+          guard state["state"] as? String == "disconnected",
+                state["onDemand"] as? Bool == false, state["desiredConnected"] as? Bool == false else {
+            return measurementReply(command, ["ok": false, "error": "connection_changing"])
+          }
+          data = await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+              continuation.resume(returning: Data(OutlineMeasureServer(config, speed, id).utf8))
+            }
+          }
+        }
+        guard identity == (try await measurementConnectionIdentity()) else {
+          return measurementReply(command, ["ok": false, "error": "connection_changed"])
+        }
+        guard let result = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { throw NSError(domain: "OutlineMeasurement", code: 3) }
+        measurementReply(command, result)
+      } catch {
+        // Never log transport configurations, provider requests or raw errors.
+        measurementReply(command, ["ok": false, "error": "unavailable"])
+      }
+    }
+  }
+
+  func cancelServerMeasurement(_ command: CDVInvokedUrlCommand) {
+    guard let id = command.argument(at: 0) as? String, id.count <= 64 else {
+      return measurementReply(command, ["ok": false, "error": "invalid_request"])
+    }
+    OutlineCancelServerMeasurement(id)
+    Task {
+      if let managers = try? await NETunnelProviderManager.loadAllFromPreferences(),
+         let session = managers.first?.connection as? NETunnelProviderSession,
+         let request = try? JSONSerialization.data(withJSONObject: ["action": "cancelServerMeasurement", "measurementId": id]) {
+        _ = try? await providerMeasurementMessage(session, request, timeout: 5)
+      }
+      measurementReply(command, ["ok": true])
+    }
+  }
+
   func getAppVersion(_ command: CDVInvokedUrlCommand) {
     let info = Bundle.main.infoDictionary ?? [:]
     let result = CDVPluginResult(status: CDVCommandStatus_OK, messageAs: [
@@ -165,7 +255,7 @@ class OutlinePlugin: CDVPlugin {
         UserDefaults.standard.set(normalized as String, forKey: OutlineVpn.domainExclusionsKey)
         getDomainExclusions(command)
       } catch {
-        sendError("Could not save. Use exact domain names, without URLs, IP addresses or wildcards.", callbackId: command.callbackId)
+        sendError("Could not save. Use domain names or *.example.com patterns, without URLs or IP addresses.", callbackId: command.callbackId)
       }
     }
   }
@@ -360,7 +450,7 @@ class OutlinePlugin: CDVPlugin {
         callbackId: command.callbackId
       )
     }
-    DDLogDebug("Invoking Method \(methodName) with input \(input)")
+    DDLogDebug("Invoking Method \(methodName)")
     Task {
       guard let result = OutlineInvokeMethod(methodName, input) else {
         DDLogDebug("InvokeMethod \(methodName) got nil result")

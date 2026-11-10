@@ -18,6 +18,8 @@ package main
 
 import (
 	"bufio"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -29,6 +31,9 @@ import (
 	"time"
 )
 
+// Set by custom app builds; the upstream default remains unchanged.
+var bundleID = "org.outline.macos.client"
+
 func run() int {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -36,12 +41,12 @@ func run() int {
 		return 1
 	}
 	flags := flag.NewFlagSet("outlinectl", flag.ContinueOnError)
-	socket := flags.String("socket", filepath.Join(home, "Library/Containers/org.outline.macos.client/Data/.outline-cli/control.sock"), "Outline app's Unix socket")
+	socket := flags.String("socket", filepath.Join(home, "Library/Containers", bundleID, "Data/.outline-cli/control.sock"), "Outline app's Unix socket")
 	server := flags.String("server", "", "exact saved server name or ID")
-	domains := flags.String("domains", "", "comma-separated exact domains for set-exclusions; empty clears the list")
+	domains := flags.String("domains", "", "comma-separated domains or *.example.com patterns for set-exclusions; empty clears the list")
 	expected := flags.String("expect-active", "", "required current server ID for watchdog recovery")
 	flags.Usage = func() {
-		fmt.Fprintln(flags.Output(), "Usage: outlinectl [flags] status|servers|connect|disconnect|reconnect|recover|exclusions|set-exclusions\nFlags must precede the command. connect/reconnect require --server.\nrecover requires --server and --expect-active and respects manual disconnection.")
+		fmt.Fprintln(flags.Output(), "Usage: outlinectl [flags] status|servers|connect|disconnect|reconnect|recover|exclusions|set-exclusions|latency|speed-test\nSpeed tests transfer up to 37 MB of public test data.\nFlags must precede the command. connect/reconnect require --server.\nrecover requires --server and --expect-active and respects manual disconnection.")
 		flags.PrintDefaults()
 	}
 	if err := flags.Parse(os.Args[1:]); err != nil {
@@ -61,7 +66,7 @@ func run() int {
 			fmt.Fprintln(os.Stderr, "This command takes no server flags")
 			return 2
 		}
-	case "connect", "reconnect":
+	case "connect", "reconnect", "latency", "speed-test":
 		if *server == "" || *expected != "" {
 			fmt.Fprintln(os.Stderr, "Specify --server only")
 			return 2
@@ -90,6 +95,13 @@ func run() int {
 		return 2
 	}
 	request := map[string]any{"v": 1, "action": action, "server": *server, "expected": *expected}
+	if action == "latency" || action == "speed-test" {
+		var token [16]byte
+		if _, err := rand.Read(token[:]); err != nil {
+			return 1
+		}
+		request["measurementId"] = hex.EncodeToString(token[:])
+	}
 	if action == "set-exclusions" {
 		entries := []string{}
 		if *domains != "" {

@@ -166,17 +166,18 @@ func (c *ClientConfig) new(keyID string, providerClientConfigText string) (*Clie
 		if err != nil {
 			return nil, &platerrors.PlatformError{Code: platerrors.InvalidConfig, Message: err.Error()}
 		}
-		if len(rules.KnownDomains) > 0 {
-			// Network Extension owns these sockets, so they escape its packet tunnel.
-			// Resolve through a direct DNS socket, never through the synthetic resolver.
-			resolver := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-				return (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, network, "1.1.1.1:53")
-			}}
-			direct := net.Dialer{Resolver: resolver, Timeout: 10 * time.Second, KeepAlive: -1}
-			router := domainbypass.New(rules, transportPair, transportPair.PacketRelay, &transport.TCPDialer{Dialer: direct}, &direct)
-			client.sd = &configregistry.Dialer[transport.StreamConn]{ConnectionProviderInfo: configregistry.ConnectionProviderInfo{ConnType: configregistry.ConnTypePartial}, Dial: router.DialStream}
-			client.pr = &configregistry.PacketRelay{ConnectionProviderInfo: configregistry.ConnectionProviderInfo{ConnType: configregistry.ConnTypePartial}, PacketRelay: router, NotifyNetworkChanged: transportPair.PacketRelay.NotifyNetworkChanged}
+		// Network Extension owns these sockets, so they escape its packet tunnel.
+		// Resolve through a direct DNS socket, never through the synthetic resolver.
+		resolver := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			return (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, network, "1.1.1.1:53")
+		}}
+		direct := net.Dialer{Resolver: resolver, Timeout: 10 * time.Second, KeepAlive: -1}
+		router := domainbypass.New(rules, transportPair, transportPair.PacketRelay, &transport.TCPDialer{Dialer: direct}, &direct)
+		if err := router.EnableWildcardRegistry(clientConfig.DataDir); err != nil {
+			return nil, &platerrors.PlatformError{Code: platerrors.InvalidConfig, Message: "could not open domain address registry"}
 		}
+		client.sd = &configregistry.Dialer[transport.StreamConn]{ConnectionProviderInfo: configregistry.ConnectionProviderInfo{ConnType: configregistry.ConnTypePartial}, Dial: router.DialStream}
+		client.pr = &configregistry.PacketRelay{ConnectionProviderInfo: configregistry.ConnectionProviderInfo{ConnType: configregistry.ConnTypePartial}, PacketRelay: router, NotifyNetworkChanged: transportPair.PacketRelay.NotifyNetworkChanged}
 	}
 
 	// TODO: figure out a better way to handle parse calls.

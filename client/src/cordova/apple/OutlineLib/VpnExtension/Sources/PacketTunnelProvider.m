@@ -336,10 +336,14 @@ bool getIpAddressString(const struct sockaddr *sa, char *s, socklen_t maxbytes) 
 NSString *const kFetchLastErrorIPCName = @"fetchLastDisconnectDetailedJsonError";
 
 - (void)handleAppMessage:(NSData *)messageData completionHandler:(void (^)(NSData * _Nullable))completion {
-  // mimics fetchLastDisconnectErrorWithCompletionHandler on older systems
+  // Capabilities are negotiated before sending any credential-bearing request.
   NSString *ipcName = [[NSString alloc] initWithData:messageData encoding:NSUTF8StringEncoding];
+  if ([ipcName isEqualToString:@"serverMeasurementsV1"]) {
+    return completion([@"1" dataUsingEncoding:NSUTF8StringEncoding]);
+  }
+  if ([SwiftBridge handleMeasurementMessage:messageData completion:completion]) return;
   if (![ipcName isEqualToString:kFetchLastErrorIPCName]) {
-    DDLogWarn(@"Invalid Extension IPC call: %@", ipcName);
+    DDLogWarn(@"Invalid Extension IPC call");
     return completion(nil);
   }
   completion([SwiftBridge loadLastErrorToIPCResponse]);

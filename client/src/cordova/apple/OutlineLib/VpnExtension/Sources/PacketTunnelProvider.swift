@@ -21,6 +21,32 @@ import Tun2socks
 @objcMembers
 public class SwiftBridge: NSObject {
 
+  /// Measurement sockets run here, outside the provider's own packet tunnel.
+  public static func handleMeasurementMessage(_ data: Data, completion: @escaping (Data?) -> Void) -> Bool {
+    guard data.count <= 262144,
+          let request = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+          let action = request["action"] as? String,
+          ["measureServer", "cancelServerMeasurement"].contains(action) else { return false }
+    guard let id = request["measurementId"] as? String, id.count <= 64 else {
+      completion(nil)
+      return true
+    }
+    if action == "cancelServerMeasurement" {
+      OutlineCancelServerMeasurement(id)
+      completion(Data("{\"ok\":true}".utf8))
+      return true
+    }
+    guard let config = request["config"] as? String, config.utf8.count <= 131072,
+          let speed = request["speed"] as? Bool else {
+      completion(nil)
+      return true
+    }
+    DispatchQueue.global(qos: .utility).async {
+      completion(Data(OutlineMeasureServer(config, speed, id).utf8))
+    }
+    return true
+  }
+
   /** Helper function that we can call from Objective-C. */
   public static func getTunnelNetworkSettings(domainExclusions: String = "") -> NEPacketTunnelNetworkSettings {
     // The remote address is not required, but needs to be valid, or else you get a
@@ -49,7 +75,7 @@ public class SwiftBridge: NSObject {
        let domains = config["domains"] as? [String], !domains.isEmpty {
       // Specific matches take precedence over another VPN's catch-all resolver.
       // Keep the default resolver behavior for all other queries.
-      dnsSettings.matchDomains = [""] + domains
+      dnsSettings.matchDomains = [""] + Array(Set(domains.map { $0.hasPrefix("*.") ? String($0.dropFirst(2)) : $0 })).sorted()
       dnsSettings.matchDomainsNoSearch = true
     }
     settings.dnsSettings = dnsSettings

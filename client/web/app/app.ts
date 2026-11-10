@@ -877,6 +877,74 @@ export class App {
     return !('cordova' in window);
   }
 
+  private diagnosticJobs = new Map<string, boolean>();
+  private diagnosticRequest?: (
+    config: string,
+    speed: boolean,
+    id: string
+  ) => Promise<import('../model/server_measurement').ServerMeasurement>;
+  private diagnosticCancel?: (id: string) => Promise<void>;
+
+  enableServerDiagnostics(
+    request: NonNullable<App['diagnosticRequest']>,
+    cancel: NonNullable<App['diagnosticCancel']>
+  ) {
+    this.diagnosticRequest = request;
+    this.diagnosticCancel = cancel;
+    this.rootEl.showServerDiagnostics = true;
+    const view = this.rootEl.$.serverDiagnosticsView;
+    view.listServers = () =>
+      this.serverRepo.getAll().map(({id, name}) => ({id, name}));
+    view.measure = this.measureServer.bind(this);
+    view.cancel = this.cancelServerMeasurement.bind(this);
+    view.connect = async (id: string) => {
+      const server = this.serverRepo.getById(id);
+      if (!server) return;
+      try {
+        if (await server.checkRunning()) {
+          this.rootEl.changePage('home');
+          return;
+        }
+      } catch {
+        // Let the normal connection path handle an unavailable status.
+      }
+      await this.connectServer(
+        new CustomEvent('ConnectPressed', {detail: {serverId: id}})
+      );
+    };
+  }
+
+  async measureServer(
+    server: string,
+    speed: boolean,
+    id: string
+  ): Promise<import('../model/server_measurement').ServerMeasurement> {
+    if (!this.diagnosticRequest)
+      return {ok: false, error: 'unsupported_platform'};
+    if (this.diagnosticJobs.size) return {ok: false, error: 'busy'};
+    const byId = this.serverRepo.getById(server);
+    const matches = byId
+      ? [byId]
+      : this.serverRepo.getAll().filter(item => item.name === server);
+    if (matches.length !== 1 || !matches[0].getClientConfig)
+      return {ok: false, error: 'unknown_server'};
+    this.diagnosticJobs.set(id, false);
+    try {
+      const config = await matches[0].getClientConfig();
+      if (this.diagnosticJobs.get(id)) return {ok: false, error: 'cancelled'};
+      return await this.diagnosticRequest(config, speed, id);
+    } catch {
+      return {ok: false, error: 'unavailable'};
+    } finally {
+      this.diagnosticJobs.delete(id);
+    }
+  }
+
+  async cancelServerMeasurement(id: string): Promise<void> {
+    if (this.diagnosticJobs.has(id)) this.diagnosticJobs.set(id, true);
+    await this.diagnosticCancel?.(id);
+  }
+
   enableDomainExclusions(
     request: import('../views/domain_exclusions_view').DomainExclusionsView['request']
   ) {

@@ -38,6 +38,9 @@ export interface Server {
   // Disconnects from the server and stops any traffic redirection.
   disconnect(): Promise<void>;
 
+  // Resolve a measurement transport without starting or changing the VPN.
+  getClientConfig?(): Promise<string>;
+
   // Checks whether the server is already active and in use.
   checkRunning(): Promise<boolean>;
 }

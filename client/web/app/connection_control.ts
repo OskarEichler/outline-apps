@@ -27,6 +27,7 @@ export interface ControlRequest {
   expected?: string;
   deadline?: number;
   domains?: string[];
+  measurementId?: string;
 }
 
 // Both GUI buttons and local CLI commands enter this queue. In particular,
