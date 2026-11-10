@@ -147,8 +147,8 @@ class OutlinePlugin: CDVPlugin {
         let data: Data
         if let manager, manager.connection.status == .connected,
            let session = manager.connection as? NETunnelProviderSession {
-          let capability = try await providerMeasurementMessage(session, Data("serverMeasurementsV1".utf8), timeout: 5)
-          guard capability == Data("1".utf8) else {
+          guard let capability = try? await providerMeasurementMessage(session, Data("serverMeasurementsV1".utf8), timeout: 5),
+                capability == Data("1".utf8) else {
             return measurementReply(command, ["ok": false, "error": "reconnect_required"])
           }
           let request = try JSONSerialization.data(withJSONObject: ["action": "measureServer", "config": config, "speed": speed, "measurementId": id])
