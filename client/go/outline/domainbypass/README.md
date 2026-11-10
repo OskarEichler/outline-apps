@@ -69,4 +69,6 @@ and DNS over TCP/UDP return synthetic addresses for selected names, excluded
 HTTPS uses the regular public IP, ordinary HTTPS uses the VPN exit, and removing
 a rule sends both fresh and cached TCP destinations back through the proxy.
 The Chrome automation initialization also succeeded with the VPN enabled and
-the target domain excluded. Installed native UI interaction remains unverified.
+the target domain excluded. Outline Control 1.0.3 native UI verification confirms
+that exclusions can be edited and saved while connected. Live add/remove checks
+confirm that saving preserves the active connection and applies on reconnect.
