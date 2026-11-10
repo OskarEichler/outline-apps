@@ -11,8 +11,8 @@ require (
 	go.nhat.io/cookiejar v0.3.0
 	golang.getoutline.org/sdk v0.1.0-rc1
 	golang.getoutline.org/sdk/x v0.0.9-alpha.1
-	golang.org/x/net v0.44.0
 	golang.org/x/mobile v0.0.0-20250813145510-f12310a0cfd9
+	golang.org/x/net v0.44.0
 	golang.org/x/sys v0.36.0
 )
 
@@ -90,3 +90,5 @@ tool (
 	github.com/google/addlicense
 	github.com/google/go-licenses/v2
 )
+
+replace github.com/eycorsican/go-tun2socks => github.com/OskarEichler/go-tun2socks v1.16.12-0.20261110050904-84cf1be85d13
