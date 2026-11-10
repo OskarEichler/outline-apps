@@ -80,7 +80,9 @@ func (a *association) HandlePacket(p []byte, source netip.AddrPort) error {
 	case a.responses <- item:
 		return nil
 	default:
-		return errors.New("packet response queue full")
+		// Queue pressure is UDP packet loss, not an association failure. Returning
+		// an error would close the proxy/direct socket and prevent QUIC recovery.
+		return nil
 	}
 }
 
