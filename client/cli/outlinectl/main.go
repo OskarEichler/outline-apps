@@ -46,7 +46,7 @@ func run() int {
 	domains := flags.String("domains", "", "comma-separated domains or *.example.com patterns for set-exclusions; empty clears the list")
 	expected := flags.String("expect-active", "", "required current server ID for watchdog recovery")
 	flags.Usage = func() {
-		fmt.Fprintln(flags.Output(), "Usage: outlinectl [flags] status|servers|connect|disconnect|reconnect|recover|exclusions|set-exclusions|latency|speed-test\nSpeed tests transfer up to 37 MB of public test data.\nFlags must precede the command. connect/reconnect require --server.\nrecover requires --server and --expect-active and respects manual disconnection.")
+		fmt.Fprintln(flags.Output(), "Usage: outlinectl [flags] status|servers|connect|disconnect|reconnect|recover|exclusions|set-exclusions|latency|speed-test\nSpeed tests transfer up to 28 MB of public test data.\nFlags must precede the command. connect/reconnect require --server.\nrecover requires --server and --expect-active and respects manual disconnection.")
 		flags.PrintDefaults()
 	}
 	if err := flags.Parse(os.Args[1:]); err != nil {

@@ -163,7 +163,7 @@
   "domain-exclusions-save-error": "Could not save. Use domains or *.example.com patterns without URLs or IP addresses (maximum 100).",
   "server-diagnostics-page-title": "Server tests",
   "server-tests-description": "Compare HTTPS latency through your saved servers. Tests leave your VPN connection unchanged.",
-  "server-tests-bandwidth": "Speed tests measure approximate single-connection rates to Cloudflare and use up to 37 MB of data. Run them one server at a time.",
+  "server-tests-bandwidth": "Speed tests measure approximate single-connection rates to Cloudflare and use up to 28 MB of data. Run them one server at a time.",
   "server-tests-running-speed": "Testing download and upload:",
   "server-tests-running-latency": "Checking latency:",
   "server-tests-complete": "Tests finished.",

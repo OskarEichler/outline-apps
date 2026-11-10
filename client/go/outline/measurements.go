@@ -207,7 +207,8 @@ func MeasureServer(config string, speed bool, id string) string {
 	sort.Float64s(samples)
 	result.LatencyMS = &samples[1]
 	if speed {
-		for _, n := range []int64{256 << 10, 1 << 20, 4 << 20, 16 << 20} {
+		// Keep every sample below the public test endpoint's request-size limit.
+		for _, n := range []int64{256 << 10, 1 << 20, 4 << 20, 8 << 20} {
 			elapsed, err := request(http.MethodGet, "https://speed.cloudflare.com/__down?bytes="+strconv.FormatInt(n, 10), n)
 			if err != nil {
 				return fail("download_failed")
