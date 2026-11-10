@@ -48,6 +48,10 @@ class OutlinePlugin: CDVPlugin {
   private var controlSocket: OutlineControlSocket?
   private var controlCallbacks: [String: ([String: Any]) -> Void] = [:]
   private var controlCallbackId: String?
+  private let measurementStatusLock = NSLock()
+  private var measurementStatusRevision: UInt64 = 0
+  private var measurementLastStatus: NEVPNStatus?
+  private var measurementLastTunnelId: String?
 
   func onControlCommand(_ command: CDVInvokedUrlCommand) {
     #if os(macOS) || targetEnvironment(macCatalyst)
@@ -129,9 +133,12 @@ class OutlinePlugin: CDVPlugin {
     }
   }
 
-  private func measurementConnectionIdentity() async throws -> String {
-    guard let manager = try await NETunnelProviderManager.loadAllFromPreferences().first else { return "none" }
-    return "\(manager.connection.status.rawValue):\(manager.connection.connectedDate?.timeIntervalSince1970 ?? 0)"
+  private func measurementConnectionIdentity() async -> String {
+    let state = await OutlineVpn.shared.controlSnapshot()
+    let revision = measurementStatusLock.withLock { measurementStatusRevision }
+    // connectedDate is reconstructed by NetworkExtension and can drift between
+    // preference loads. Track real status changes and the selected server instead.
+    return "\(revision):\(state["state"] ?? "unknown"):\(state["serverId"] ?? "none"):\(state["onDemand"] ?? false):\(state["desiredConnected"] ?? false)"
   }
 
   func measureServer(_ command: CDVInvokedUrlCommand) {
@@ -142,7 +149,7 @@ class OutlinePlugin: CDVPlugin {
     }
     Task {
       do {
-        let identity = try await measurementConnectionIdentity()
+        let identity = await measurementConnectionIdentity()
         let manager = try await NETunnelProviderManager.loadAllFromPreferences().first
         let data: Data
         if let manager, manager.connection.status == .connected,
@@ -165,7 +172,7 @@ class OutlinePlugin: CDVPlugin {
             }
           }
         }
-        guard identity == (try await measurementConnectionIdentity()) else {
+        guard identity == (await measurementConnectionIdentity()) else {
           return measurementReply(command, ["ok": false, "error": "connection_changed"])
         }
         guard let result = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { throw NSError(domain: "OutlineMeasurement", code: 3) }
@@ -585,6 +592,13 @@ class OutlinePlugin: CDVPlugin {
   // Receives NEVPNStatusDidChange notifications. Calls onTunnelStatusChange for the active
   // tunnel.
   func onVpnStatusChange(vpnStatus: NEVPNStatus, tunnelId: String) {
+    measurementStatusLock.lock()
+    if measurementLastStatus != vpnStatus || measurementLastTunnelId != tunnelId {
+      measurementStatusRevision &+= 1
+      measurementLastStatus = vpnStatus
+      measurementLastTunnelId = tunnelId
+    }
+    measurementStatusLock.unlock()
     DDLogDebug(
       "OutlinePlugin received onStatusChange (\(String(describing: vpnStatus))) for tunnel \(tunnelId)"
     )
