@@ -16,6 +16,12 @@ keep the original proxy transport, including its UDP connectivity fallback.
 Direct DNS uses Cloudflare (`1.1.1.1:53`) through the extension's direct sockets;
 a failed lookup fails the connection, rather than falling back to another route.
 
+UDP response buffering is bounded. A full response queue drops the incoming
+datagram while keeping the association and its proxy/direct sockets open. This
+lets QUIC and other protocols recover from packet loss without losing their
+existing flow. Actual transport errors and explicit close still end the
+association.
+
 Addresses are allocated from a persistent, append-only hostname registry, capped
 at 4,096 historical names. Removing a rule never reassigns its address. Cached
 TCP connections to a removed name go through the proxy; cached UDP flows are
